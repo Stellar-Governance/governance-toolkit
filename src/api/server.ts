@@ -39,9 +39,7 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
       return;
     }
     const status =
-      typeof err === 'object' && err !== null && 'statusCode' in err
-        ? Number(err.statusCode)
-        : 500;
+      typeof err === 'object' && err !== null && 'statusCode' in err ? Number(err.statusCode) : 500;
     if (status >= 400 && status < 500) {
       // Fastify's own client errors: bad JSON, body too large, wrong content type.
       sendError(reply, status, 'VALIDATION', 'the request could not be read');
