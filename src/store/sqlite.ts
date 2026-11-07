@@ -1,10 +1,12 @@
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { PROPOSAL_STATES, VOTE_CHOICES, type ProposalStateName } from '../chain/types.js';
 import type {
+  AuthChallenge,
   EventBatch,
   IndexCursor,
   IndexGap,
   ProposalQuery,
+  Session,
   Store,
   StoredAccount,
   StoredAction,
@@ -71,6 +73,21 @@ export const MIGRATIONS: readonly string[] = [
      to_ledger INTEGER NOT NULL,
      recorded_at INTEGER NOT NULL
    );`,
+  // 2: sign-in
+  `CREATE TABLE auth_challenges (
+     nonce TEXT PRIMARY KEY,
+     address TEXT NOT NULL,
+     message TEXT NOT NULL,
+     expires_at INTEGER NOT NULL,
+     used INTEGER NOT NULL DEFAULT 0
+   );
+   CREATE TABLE sessions (
+     id_hash TEXT PRIMARY KEY,
+     address TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     expires_at INTEGER NOT NULL
+   );
+   CREATE INDEX sessions_expiry ON sessions(expires_at);`,
 ];
 
 function str(row: Row, col: string): string {
@@ -382,6 +399,73 @@ export class SqliteStore implements Store {
         recordedAt: int(r, 'recorded_at'),
       })),
     );
+  }
+
+  /** @inheritdoc */
+  saveChallenge(c: AuthChallenge, now: number): Promise<void> {
+    this.inTransaction(() => {
+      this.db.prepare('DELETE FROM auth_challenges WHERE expires_at <= ?').run(now);
+      this.db
+        .prepare(
+          'INSERT INTO auth_challenges (nonce, address, message, expires_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(c.nonce, c.address, c.message, c.expiresAt);
+    });
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  consumeChallenge(nonce: string): Promise<(AuthChallenge & { alreadyUsed: boolean }) | undefined> {
+    const result = this.inTransaction(() => {
+      const row = this.db.prepare('SELECT * FROM auth_challenges WHERE nonce = ?').get(nonce);
+      if (row === undefined) return undefined;
+      this.db.prepare('UPDATE auth_challenges SET used = 1 WHERE nonce = ?').run(nonce);
+      return {
+        nonce: str(row, 'nonce'),
+        address: str(row, 'address'),
+        message: str(row, 'message'),
+        expiresAt: int(row, 'expires_at'),
+        alreadyUsed: int(row, 'used') === 1,
+      };
+    });
+    return Promise.resolve(result);
+  }
+
+  /** @inheritdoc */
+  createSession(s: Session): Promise<void> {
+    this.db
+      .prepare(
+        'INSERT INTO sessions (id_hash, address, created_at, expires_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(s.idHash, s.address, s.createdAt, s.expiresAt);
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  getSession(idHash: string): Promise<Session | undefined> {
+    const row = this.db.prepare('SELECT * FROM sessions WHERE id_hash = ?').get(idHash);
+    return Promise.resolve(
+      row === undefined
+        ? undefined
+        : {
+            idHash: str(row, 'id_hash'),
+            address: str(row, 'address'),
+            createdAt: int(row, 'created_at'),
+            expiresAt: int(row, 'expires_at'),
+          },
+    );
+  }
+
+  /** @inheritdoc */
+  deleteSession(idHash: string): Promise<void> {
+    this.db.prepare('DELETE FROM sessions WHERE id_hash = ?').run(idHash);
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  purgeSessions(now: number): Promise<number> {
+    const r = this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now);
+    return Promise.resolve(Number(r.changes));
   }
 
   /** @inheritdoc */

@@ -104,8 +104,43 @@ export interface ProposalQuery {
   limit: number;
 }
 
+/** A sign-in challenge waiting for its signature. */
+export interface AuthChallenge {
+  /** Random, single-use. */
+  nonce: string;
+  address: string;
+  /** The exact text the wallet signs. */
+  message: string;
+  /** Seconds since the epoch (server clock). */
+  expiresAt: number;
+}
+
+/** A sign-in session. Only the sha256 of the session id is stored. */
+export interface Session {
+  idHash: string;
+  address: string;
+  createdAt: number;
+  expiresAt: number;
+}
+
 /** Persistence used by the indexer and the API. */
 export interface Store {
+  /** Stores a new challenge and deletes expired ones. */
+  saveChallenge(c: AuthChallenge, now: number): Promise<void>;
+  /**
+   * Marks a challenge used and returns it as it was, or `undefined` if the nonce is unknown.
+   * `alreadyUsed` is true when an earlier call consumed it (a replay).
+   */
+  consumeChallenge(nonce: string): Promise<(AuthChallenge & { alreadyUsed: boolean }) | undefined>;
+  /** Stores a session. */
+  createSession(s: Session): Promise<void>;
+  /** A session by the hash of its id. */
+  getSession(idHash: string): Promise<Session | undefined>;
+  /** Deletes a session (sign-out). */
+  deleteSession(idHash: string): Promise<void>;
+  /** Deletes expired sessions; returns how many. */
+  purgeSessions(now: number): Promise<number>;
+
   /** Creates or replaces a proposal. */
   upsertProposal(p: StoredProposal): Promise<void>;
   /** A proposal by id. */
