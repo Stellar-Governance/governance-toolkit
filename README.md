@@ -2,7 +2,9 @@
 
 Node service for Stellar Governance. It will index on-chain proposals and votes, host proposal drafts and discussion, sign people in with their Stellar wallet, and serve a read API for the frontend and analytics.
 
-**Status:** skeleton only. The service is built in Phase 2 (see the project `PLAYBOOK.md`).
+**Status:** in progress. Built so far: validated configuration (`src/config.ts`, see `.env.example`), typed errors, and a read-only chain client over Stellar RPC with timeouts and retries (`src/chain/`), using contract bindings generated into `src/contract/`. The indexer, sign-in and HTTP API are not built yet.
+
+Opt-in live tests read the testnet deployment: `LIVE_TESTNET=1 pnpm test` (read-only; nothing is signed or sent).
 
 **Audit status:** the governance contract this toolkit reads has not been audited, and neither has this toolkit.
 
