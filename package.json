@@ -12,7 +12,8 @@
     "lint": "eslint . && prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "build": "tsc -p tsconfig.build.json"
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file-if-exists=.env dist/main.js"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
@@ -26,5 +27,10 @@
     "@stellar/stellar-sdk": "^17.4.0",
     "fastify": "^5.12.8",
     "zod": "^4.6.7"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "governance-toolkit": "dist/main.js"
   }
 }

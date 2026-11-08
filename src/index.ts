@@ -1,14 +1,13 @@
-/** Name of this package, used in logs and the health endpoint. */
-export const PACKAGE_NAME = 'governance-toolkit';
-
 /**
- * Returns the package name and version string shown by the health endpoint.
- * @param version - the version to report; must be non-empty.
- * @throws {RangeError} when `version` is empty.
+ * Library entry point of the governance toolkit. The service itself starts from `main.ts`.
  */
-export function describe(version: string): string {
-  if (version.length === 0) {
-    throw new RangeError('version must not be empty');
-  }
-  return `${PACKAGE_NAME} ${version}`;
-}
+export { loadConfig, type ToolkitConfig } from './config.js';
+export * from './errors.js';
+export { createService, type Service, type ServiceOverrides } from './service.js';
+export { RpcChainClient, type ChainClient, type EventQuery } from './chain/client.js';
+export { HttpRpcTransport, type RpcTransport } from './chain/transport.js';
+export { Indexer } from './indexer/indexer.js';
+export { SqliteStore } from './store/sqlite.js';
+export type * from './store/types.js';
+export { contentHash } from './discussion/drafts.js';
+export { VERSION } from './version.js';
