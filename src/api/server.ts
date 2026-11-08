@@ -2,22 +2,36 @@ import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { NotFoundError, RateLimitError, ToolkitError, UnauthorizedError } from '../errors.js';
 import { registerAuthRoutes } from './auth-routes.js';
 import { registerDiscussionRoutes } from './discussion-routes.js';
+import { registerReadRoutes } from './read-routes.js';
 import type { ApiDeps, ErrorBody } from './http.js';
 
-export type { ApiDeps, ErrorBody } from './http.js';
+export type { ApiDeps, ErrorBody, IndexerHealth, ServiceInfo } from './http.js';
 
 function sendError(reply: FastifyReply, status: number, code: string, message: string): void {
   const body: ErrorBody = { error: { code, message } };
   void reply.status(status).send(body);
 }
 
+/** Options for {@link buildServer}. */
+export interface BuildOptions {
+  /** Called for every registered route (used by the OpenAPI drift test). */
+  onRoute?: (route: { method: string; url: string }) => void;
+}
+
 /**
  * Builds the HTTP API (not listening yet). Sessions travel in `Authorization: Bearer`; no
  * cookies are set, and CORS answers only the configured origins.
  */
-export function buildServer(deps: ApiDeps): FastifyInstance {
+export function buildServer(deps: ApiDeps, options: BuildOptions = {}): FastifyInstance {
   const app = Fastify({ logger: false, bodyLimit: 256 * 1024 });
   const allowed = new Set(deps.corsOrigins);
+  const { onRoute } = options;
+  if (onRoute !== undefined) {
+    app.addHook('onRoute', (route) => {
+      const methods = Array.isArray(route.method) ? route.method : [route.method];
+      for (const method of methods) if (method !== 'HEAD') onRoute({ method, url: route.url });
+    });
+  }
 
   app.addHook('onRequest', async (req, reply) => {
     const origin = req.headers.origin;
@@ -59,5 +73,6 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
 
   registerAuthRoutes(app, deps);
   registerDiscussionRoutes(app, deps);
+  registerReadRoutes(app, deps);
   return app;
 }

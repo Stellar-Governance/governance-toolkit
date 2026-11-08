@@ -99,9 +99,25 @@ export interface EventBatch {
 export interface ProposalQuery {
   state?: ProposalStateName | undefined;
   proposer?: string | undefined;
-  /** Only ids below this one (the pagination cursor). */
+  /** Only ids below this one (pagination cursor for newest-first lists). */
   beforeId?: number | undefined;
+  /** Only ids above this one (pagination cursor for oldest-first lists). */
+  afterId?: number | undefined;
+  /** `desc` (newest first, the default) or `asc`. */
+  order?: 'asc' | 'desc' | undefined;
   limit: number;
+}
+
+/** Counts for the summary statistics. */
+export interface StoreStats {
+  proposalsByState: Partial<Record<ProposalStateName, number>>;
+  /** Votes seen in events (limited by RPC retention; see gaps). */
+  votes: number;
+  uniqueVoters: number;
+  /** Accounts whose latest seen deposit is above zero. */
+  accountsWithDeposit: number;
+  /** Ledger close time of the latest proposal read, or null before the first. */
+  asOf: number | null;
 }
 
 /** A sign-in challenge waiting for its signature. */
@@ -246,6 +262,13 @@ export interface Store {
   recordGap(gap: IndexGap): Promise<void>;
   /** Every recorded gap, oldest first. */
   listGaps(): Promise<IndexGap[]>;
+
+  /** Counts for the summary statistics. */
+  stats(): Promise<StoreStats>;
+  /** Number of indexed votes per proposal id. */
+  voteCounts(): Promise<Map<number, number>>;
+  /** Every indexed vote in event order, after `afterEventId` if given. */
+  allVotes(q: { afterEventId?: string | undefined; limit: number }): Promise<StoredVote[]>;
 
   /** Releases the database. */
   close(): Promise<void>;

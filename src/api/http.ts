@@ -6,12 +6,30 @@ import type { DraftService } from '../discussion/drafts.js';
 import { ValidationError } from '../errors.js';
 import type { Store } from '../store/types.js';
 
+/** Indexer health reported by `/health`. */
+export interface IndexerHealth {
+  /** Local time (seconds) of the last successful run, or null. */
+  lastSuccessAt: number | null;
+  /** Message of the last failed run, or null after a success. */
+  lastError: string | null;
+}
+
+/** Identity of the running service for `/health`. */
+export interface ServiceInfo {
+  version: string;
+  network: string;
+  contractId: string;
+  health: () => IndexerHealth;
+}
+
 /** What the HTTP API needs. */
 export interface ApiDeps {
   store: Store;
   auth: AuthService;
   drafts: DraftService;
   comments: CommentService;
+  /** Identity and indexer health for `/health`. */
+  service: ServiceInfo;
   /** Browser origins allowed to call the API (exact match). */
   corsOrigins: readonly string[];
   /** Called for unexpected errors; never given request IPs. */

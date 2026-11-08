@@ -16,6 +16,7 @@ import type {
   StoredDraft,
   StoredProposal,
   StoredVote,
+  StoreStats,
 } from './types.js';
 
 type Row = Record<string, SQLOutputValue>;
@@ -338,12 +339,14 @@ export class SqliteStore implements Store {
          WHERE (:state IS NULL OR state = :state)
            AND (:proposer IS NULL OR proposer = :proposer)
            AND (:before IS NULL OR id < :before)
-         ORDER BY id DESC LIMIT :limit`,
+           AND (:after IS NULL OR id > :after)
+         ORDER BY id ${q.order === 'asc' ? 'ASC' : 'DESC'} LIMIT :limit`,
       )
       .all({
         state: q.state ?? null,
         proposer: q.proposer ?? null,
         before: q.beforeId ?? null,
+        after: q.afterId ?? null,
         limit: q.limit,
       });
     return Promise.resolve(rows.map(toProposal));
@@ -678,6 +681,48 @@ export class SqliteStore implements Store {
   purgeSessions(now: number): Promise<number> {
     const r = this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(now);
     return Promise.resolve(Number(r.changes));
+  }
+
+  /** @inheritdoc */
+  stats(): Promise<StoreStats> {
+    const byState: Partial<Record<ProposalStateName, number>> = {};
+    for (const r of this.db
+      .prepare('SELECT state, COUNT(*) AS n FROM proposals GROUP BY state')
+      .all()) {
+      byState[state(r)] = int(r, 'n');
+    }
+    const votes = this.db
+      .prepare('SELECT COUNT(*) AS n, COUNT(DISTINCT voter) AS u FROM votes')
+      .get();
+    const accounts = this.db
+      .prepare("SELECT COUNT(*) AS n FROM accounts WHERE deposit <> '0'")
+      .get();
+    const asOf = this.db.prepare('SELECT MAX(checked_at) AS t FROM proposals').get();
+    return Promise.resolve({
+      proposalsByState: byState,
+      votes: votes === undefined ? 0 : int(votes, 'n'),
+      uniqueVoters: votes === undefined ? 0 : int(votes, 'u'),
+      accountsWithDeposit: accounts === undefined ? 0 : int(accounts, 'n'),
+      asOf: asOf === undefined || asOf.t === null ? null : int(asOf, 't'),
+    });
+  }
+
+  /** @inheritdoc */
+  voteCounts(): Promise<Map<number, number>> {
+    const rows = this.db
+      .prepare('SELECT proposal_id, COUNT(*) AS n FROM votes GROUP BY proposal_id')
+      .all();
+    return Promise.resolve(new Map(rows.map((r) => [int(r, 'proposal_id'), int(r, 'n')])));
+  }
+
+  /** @inheritdoc */
+  allVotes(q: { afterEventId?: string | undefined; limit: number }): Promise<StoredVote[]> {
+    const rows = this.db
+      .prepare(
+        'SELECT * FROM votes WHERE (:after IS NULL OR event_id > :after) ORDER BY event_id LIMIT :limit',
+      )
+      .all({ after: q.afterEventId ?? null, limit: q.limit });
+    return Promise.resolve(rows.map(toVote));
   }
 
   /** @inheritdoc */

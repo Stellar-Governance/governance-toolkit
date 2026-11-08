@@ -4,7 +4,7 @@
 import { Keypair, Networks } from '@stellar/stellar-sdk';
 import type { FastifyInstance } from 'fastify';
 import { RateLimiter } from '../api/rate-limit.js';
-import { buildServer } from '../api/server.js';
+import { buildServer, type IndexerHealth } from '../api/server.js';
 import { AuthService } from '../auth/service.js';
 import { CommentService } from '../discussion/comments.js';
 import { DraftService } from '../discussion/drafts.js';
@@ -20,6 +20,8 @@ export interface TestApi {
   comments: CommentService;
   /** Unexpected errors reported by the error handler. */
   errors: unknown[];
+  /** What `/health` reports about the indexer; tests may change it. */
+  health: IndexerHealth;
   /** Signs in a (new or given) key and returns its auth header. */
   signIn(
     kp?: Keypair,
@@ -54,12 +56,19 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     limiter: new RateLimiter({ limit: options.commentLimit ?? 5, windowSecs: 60, now }),
   });
   const errors: unknown[] = [];
+  const health: IndexerHealth = { lastSuccessAt: null, lastError: null };
   const app = buildServer({
     store,
     auth,
     drafts,
     comments,
     corsOrigins: options.corsOrigins ?? ['http://localhost:3000'],
+    service: {
+      version: '0.0.0-test',
+      network: 'testnet',
+      contractId: 'CAOERDLG52UU6X5JENOXNKN4DWWJPVPNK7AD4RYXE3MA4TRBY62O5I5F',
+      health: () => health,
+    },
     logError: (_m, e) => errors.push(e),
   });
   return {
@@ -70,6 +79,7 @@ export function testApi(options: TestApiOptions = {}): TestApi {
     drafts,
     comments,
     errors,
+    health,
     async signIn(kp = Keypair.random()) {
       const c = await auth.createChallenge(kp.publicKey());
       const s = await auth.verify({

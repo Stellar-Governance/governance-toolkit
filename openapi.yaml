@@ -1,0 +1,639 @@
+openapi: 3.1.0
+info:
+  title: Stellar Governance toolkit API
+  version: 0.1.0
+  description: |
+    Read API over the indexed governance contract, plus drafts, comments and wallet sign-in.
+    Not a stable public API: it serves the project's own frontend and analytics.
+    Amounts are decimal strings in the token's smallest unit. Times are seconds since the epoch.
+    Votes and deposits come from contract events, which RPC keeps for a limited time; ranges that
+    could not be read are listed as `gaps`. Proposal tallies come from contract state and are
+    complete.
+    Sessions travel in `Authorization: Bearer <token>`; no cookies are used.
+servers:
+  - url: http://127.0.0.1:8787
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    ProposalId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    DraftId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,32}$' }
+    CommentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, minimum: 1 }
+    EventCursor:
+      name: cursor
+      in: query
+      description: The `next` value of the previous page (an event id).
+      schema: { type: string }
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                [VALIDATION, NOT_FOUND, UNAUTHORIZED, FORBIDDEN, CONFLICT, RATE_LIMITED, INTERNAL]
+            message: { type: string }
+    Amount:
+      type: string
+      pattern: '^-?[0-9]+$'
+    ProposalState:
+      type: string
+      enum: [Pending, Active, Defeated, Succeeded, Queued, Executed, Canceled, Expired]
+    Action:
+      oneOf:
+        - type: object
+          required: [kind, config]
+          properties:
+            kind: { const: UpdateConfig }
+            config:
+              type: object
+              properties:
+                votingDelaySecs: { type: integer }
+                votingPeriodSecs: { type: integer }
+                timelockSecs: { type: integer }
+                gracePeriodSecs: { type: integer }
+                proposalThreshold: { $ref: '#/components/schemas/Amount' }
+                quorumBps: { type: integer }
+        - type: object
+          required: [kind, contract, function, args]
+          properties:
+            kind: { const: Invoke }
+            contract: { type: string }
+            function: { type: string }
+            args: { type: array, items: {} }
+    Proposal:
+      type: object
+      properties:
+        id: { type: integer }
+        proposer: { type: string }
+        title: { type: string }
+        descriptionHash: { type: string, description: sha256 of the full text, hex }
+        uri: { type: string }
+        actions: { type: array, items: { $ref: '#/components/schemas/Action' } }
+        snapshotLedger: { type: integer }
+        voteStart: { type: integer }
+        voteEnd: { type: integer }
+        totalPower: { $ref: '#/components/schemas/Amount' }
+        quorum: { $ref: '#/components/schemas/Amount' }
+        timelockSecs: { type: integer }
+        gracePeriodSecs: { type: integer }
+        forVotes: { $ref: '#/components/schemas/Amount' }
+        againstVotes: { $ref: '#/components/schemas/Amount' }
+        abstainVotes: { $ref: '#/components/schemas/Amount' }
+        eta: { type: integer, description: 0 until queued }
+        executed: { type: boolean }
+        canceled: { type: boolean }
+        state: { $ref: '#/components/schemas/ProposalState' }
+        final: { type: boolean }
+        checkedAt: { type: integer, description: Ledger close time of the last read from the chain }
+    Vote:
+      type: object
+      properties:
+        proposalId: { type: integer }
+        voter: { type: string }
+        choice: { type: string, enum: [Against, For, Abstain] }
+        power: { $ref: '#/components/schemas/Amount' }
+        ledger: { type: integer }
+        closedAt: { type: string, format: date-time }
+        txHash: { type: string }
+        eventId: { type: string }
+    Draft:
+      type: object
+      properties:
+        id: { type: string }
+        author: { type: string }
+        title: { type: string, description: At most 120 UTF-8 bytes }
+        body: { type: string, description: Markdown, at most 32 KiB }
+        contentHash: { type: string, description: sha256 of the exact UTF-8 body, hex }
+        status: { type: string, enum: [draft, published] }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+        proposalId: { type: [integer, 'null'] }
+    Comment:
+      type: object
+      properties:
+        id: { type: integer }
+        target:
+          type: object
+          properties:
+            type: { type: string, enum: [draft, proposal] }
+            id: { oneOf: [{ type: string }, { type: integer }] }
+        author: { type: string }
+        body: { type: string, description: At most 4000 UTF-8 bytes }
+        createdAt: { type: integer }
+        editedAt: { type: [integer, 'null'] }
+    Gap:
+      type: object
+      properties:
+        fromLedger: { type: integer }
+        toLedger: { type: integer }
+        recordedAt: { type: integer }
+    Page:
+      type: object
+      properties:
+        next: { type: [string, 'null'], description: Pass as `cursor` to get the next page }
+paths:
+  /health:
+    get:
+      summary: Service and indexer status
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { const: ok }
+                  version: { type: string }
+                  network: { type: string }
+                  contractId: { type: string }
+                  indexer:
+                    type: object
+                    properties:
+                      lastSuccessAt: { type: [integer, 'null'] }
+                      lastError: { type: [string, 'null'] }
+                      nextLedger: { type: [integer, 'null'] }
+                      gaps: { type: integer }
+  /auth/challenge:
+    post:
+      summary: Get a SEP-53 sign-in challenge for an account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              additionalProperties: false
+              properties:
+                address: { type: string, description: A G... account id }
+      responses:
+        '200':
+          description: Sign `message` with the wallet's signMessage (SEP-53)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nonce: { type: string }
+                  message: { type: string }
+                  expiresAt: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /auth/verify:
+    post:
+      summary: Exchange a signed challenge for a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, nonce, signature]
+              additionalProperties: false
+              properties:
+                address: { type: string }
+                nonce: { type: string }
+                signature: { type: string, description: 64 bytes, base64 or hex }
+      responses:
+        '200':
+          description: Session started; the token is shown only once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  address: { type: string }
+                  expiresAt: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/session:
+    get:
+      summary: The account behind the current session
+      security: [{ bearer: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address: { type: string }
+                  expiresAt: { type: integer }
+        '401': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      summary: End the current session
+      security: [{ bearer: [] }]
+      responses:
+        '204': { description: Signed out }
+        '401': { $ref: '#/components/responses/Error' }
+  /proposals:
+    get:
+      summary: Indexed proposals, newest first
+      parameters:
+        - { name: state, in: query, schema: { $ref: '#/components/schemas/ProposalState' } }
+        - { name: proposer, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: integer } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Proposal' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /proposals/{id}:
+    get:
+      summary: One proposal, with the published drafts whose text hashes to its descriptionHash
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Proposal'
+                  - type: object
+                    properties:
+                      texts: { type: array, items: { $ref: '#/components/schemas/Draft' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /proposals/{id}/votes:
+    get:
+      summary: Votes on a proposal seen in events, oldest first
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+        - $ref: '#/components/parameters/EventCursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Vote' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+  /proposals/{id}/comments:
+    get:
+      summary: Comments on a proposal, oldest first
+      parameters:
+        - $ref: '#/components/parameters/ProposalId'
+        - { name: cursor, in: query, schema: { type: integer } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Comment' } }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Comment on a proposal
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/ProposalId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /accounts/{address}:
+    get:
+      summary: An account's latest deposit seen in events, and its votes
+      parameters:
+        - { name: address, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address: { type: string }
+                  deposit: { oneOf: [{ $ref: '#/components/schemas/Amount' }, { type: 'null' }] }
+                  depositLedger: { type: [integer, 'null'] }
+                  votes: { type: array, items: { $ref: '#/components/schemas/Vote' } }
+        '400': { $ref: '#/components/responses/Error' }
+  /drafts/template:
+    get:
+      summary: The built-in proposal template
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  title: { type: string }
+                  body: { type: string }
+  /drafts:
+    get:
+      summary: Published drafts, newest first; with mine=true, all of the signed-in author's drafts
+      parameters:
+        - { name: author, in: query, schema: { type: string } }
+        - { name: mine, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Draft' } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Create a draft (private until published)
+      security: [{ bearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, body]
+              additionalProperties: false
+              properties:
+                title: { type: string }
+                body: { type: string }
+                status: { type: string, enum: [draft, published] }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+  /drafts/{id}:
+    get:
+      summary: A published draft, or a private one for its author
+      parameters: [{ $ref: '#/components/parameters/DraftId' }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      summary: Edit or publish a draft (author only; not once linked to a proposal)
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/DraftId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                title: { type: string }
+                body: { type: string }
+                status: { type: string, enum: [draft, published] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Draft' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /drafts/{id}/comments:
+    get:
+      summary: Comments on a published draft, oldest first
+      parameters:
+        - $ref: '#/components/parameters/DraftId'
+        - { name: cursor, in: query, schema: { type: integer } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Comment' } }
+        '404': { $ref: '#/components/responses/Error' }
+    post:
+      summary: Comment on a published draft
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/DraftId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /comments/{id}:
+    patch:
+      summary: Edit your own comment within 15 minutes of posting
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/CommentId' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              additionalProperties: false
+              properties:
+                body: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Comment' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+    delete:
+      summary: Delete your own comment within 15 minutes of posting
+      security: [{ bearer: [] }]
+      parameters: [{ $ref: '#/components/parameters/CommentId' }]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Error' }
+        '403': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+  /stats/summary:
+    get:
+      summary: Headline numbers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  asOf: { type: [integer, 'null'] }
+                  proposals:
+                    type: object
+                    properties:
+                      total: { type: integer }
+                      byState: { type: object, additionalProperties: { type: integer } }
+                  votes:
+                    type: object
+                    properties:
+                      indexed: { type: integer }
+                      uniqueVoters: { type: integer }
+                  accounts:
+                    type: object
+                    properties:
+                      withDeposit: { type: integer }
+                  gaps: { type: array, items: { $ref: '#/components/schemas/Gap' } }
+  /stats/proposals:
+    get:
+      summary: Raw per-proposal numbers for analytics, oldest first
+      parameters:
+        - { name: cursor, in: query, schema: { type: integer } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      asOf: { type: [integer, 'null'] }
+                      gaps: { type: array, items: { $ref: '#/components/schemas/Gap' } }
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: integer }
+                            state: { $ref: '#/components/schemas/ProposalState' }
+                            final: { type: boolean }
+                            totalPower: { $ref: '#/components/schemas/Amount' }
+                            quorum: { $ref: '#/components/schemas/Amount' }
+                            forVotes: { $ref: '#/components/schemas/Amount' }
+                            againstVotes: { $ref: '#/components/schemas/Amount' }
+                            abstainVotes: { $ref: '#/components/schemas/Amount' }
+                            indexedVoters: { type: integer }
+                            snapshotLedger: { type: integer }
+                            voteStart: { type: integer }
+                            voteEnd: { type: integer }
+                            eta: { type: integer }
+                            executed: { type: boolean }
+                            canceled: { type: boolean }
+                            checkedAt: { type: integer }
+        '400': { $ref: '#/components/responses/Error' }
+  /stats/votes:
+    get:
+      summary: Every indexed vote, in event order (for participation metrics)
+      parameters:
+        - $ref: '#/components/parameters/EventCursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Page'
+                  - type: object
+                    properties:
+                      items: { type: array, items: { $ref: '#/components/schemas/Vote' } }
+                      gaps: { type: array, items: { $ref: '#/components/schemas/Gap' } }
+        '400': { $ref: '#/components/responses/Error' }
