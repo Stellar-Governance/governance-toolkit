@@ -1,43 +1,17 @@
 import { Keypair, Networks } from '@stellar/stellar-sdk';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildServer } from '../api/server.js';
-import { SqliteStore } from '../store/sqlite.js';
-import { AuthService, decodeSignature, hashToken } from './service.js';
+import { testApi, type TestApi } from '../testing/api.js';
+import { decodeSignature, hashToken } from './service.js';
 
-interface Ctx {
-  store: SqliteStore;
-  clock: { now: number };
-  app: ReturnType<typeof buildServer>;
-  errors: unknown[];
-}
+type Ctx = TestApi;
 
 const open: Ctx[] = [];
 afterEach(async () => {
-  for (const c of open.splice(0)) {
-    await c.app.close();
-    await c.store.close();
-  }
+  for (const c of open.splice(0)) await c.close();
 });
 
 function setup(): Ctx {
-  const store = new SqliteStore(':memory:');
-  const clock = { now: 1_800_000_000 };
-  const auth = new AuthService({
-    store,
-    domain: 'gov.example',
-    networkPassphrase: Networks.TESTNET,
-    challengeTtlSecs: 300,
-    sessionTtlSecs: 3_600,
-    now: () => clock.now,
-  });
-  const errors: unknown[] = [];
-  const app = buildServer({
-    store,
-    auth,
-    corsOrigins: ['http://localhost:3000'],
-    logError: (_m, e) => errors.push(e),
-  });
-  const ctx = { store, clock, app, errors };
+  const ctx = testApi();
   open.push(ctx);
   return ctx;
 }

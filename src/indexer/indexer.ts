@@ -225,5 +225,7 @@ export class Indexer {
     const p = await chain.proposal(BigInt(id));
     const state = await chain.proposalState(BigInt(id));
     await store.upsertProposal(toStoredProposal(id, p, state, checkedAt));
+    // A published draft whose text hashes to this proposal's description_hash is its text.
+    await store.linkDrafts(p.descriptionHash, id);
   }
 }

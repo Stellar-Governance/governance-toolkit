@@ -123,8 +123,80 @@ export interface Session {
   expiresAt: number;
 }
 
+/** Draft visibility: `draft` is visible to its author only, `published` to everyone. */
+export type DraftStatus = 'draft' | 'published';
+
+/** A proposal text being written and discussed off-chain. */
+export interface StoredDraft {
+  /** Random public id. */
+  id: string;
+  author: string;
+  title: string;
+  /** Markdown, exactly as written. */
+  body: string;
+  /** sha256 of the exact UTF-8 body, hex: the value to use as the proposal's `description_hash`. */
+  contentHash: string;
+  status: DraftStatus;
+  createdAt: number;
+  updatedAt: number;
+  /** The on-chain proposal whose `description_hash` equals `contentHash`, once one exists. */
+  proposalId: number | null;
+}
+
+/** Filters for {@link Store.listDrafts}. Results are newest first. */
+export interface DraftQuery {
+  author?: string | undefined;
+  status?: DraftStatus | undefined;
+  /** Pagination cursor from a previous page. */
+  before?: string | undefined;
+  limit: number;
+}
+
+/** What a comment is attached to. */
+export type CommentTarget = { type: 'draft'; id: string } | { type: 'proposal'; id: number };
+
+/** One comment in a flat list. */
+export interface StoredComment {
+  id: number;
+  target: CommentTarget;
+  author: string;
+  body: string;
+  createdAt: number;
+  /** Set when the author edited it. */
+  editedAt: number | null;
+}
+
 /** Persistence used by the indexer and the API. */
 export interface Store {
+  /** Stores a new draft. */
+  createDraft(d: StoredDraft): Promise<void>;
+  /** Replaces a draft's title, body, hash, status, update time and link. */
+  updateDraft(d: StoredDraft): Promise<void>;
+  /** A draft by id. */
+  getDraft(id: string): Promise<StoredDraft | undefined>;
+  /** Drafts, newest first, with the cursor for the next page (`undefined` at the end). */
+  listDrafts(q: DraftQuery): Promise<{ drafts: StoredDraft[]; next: string | undefined }>;
+  /** Links every unlinked published draft whose hash is `hash`; returns how many. */
+  linkDrafts(hash: string, proposalId: number): Promise<number>;
+  /** Published drafts linked to a proposal, oldest first. */
+  draftsForProposal(proposalId: number): Promise<StoredDraft[]>;
+  /** The lowest proposal id with this description hash, if any. */
+  proposalIdByHash(hash: string): Promise<number | undefined>;
+
+  /** Stores a comment and returns its id. */
+  addComment(c: Omit<StoredComment, 'id'>): Promise<number>;
+  /** A comment by id. */
+  getComment(id: number): Promise<StoredComment | undefined>;
+  /** Changes a comment's body. */
+  editComment(id: number, body: string, editedAt: number): Promise<void>;
+  /** Removes a comment. */
+  deleteComment(id: number): Promise<void>;
+  /** Comments on a target, oldest first, after `afterId` if given. */
+  listComments(
+    target: CommentTarget,
+    q: { afterId?: number | undefined; limit: number },
+  ): Promise<StoredComment[]>;
+
   /** Stores a new challenge and deletes expired ones. */
   saveChallenge(c: AuthChallenge, now: number): Promise<void>;
   /**

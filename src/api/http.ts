@@ -1,6 +1,8 @@
 import type { FastifyRequest } from 'fastify';
 import type { z } from 'zod';
 import type { AuthService, Principal } from '../auth/service.js';
+import type { CommentService } from '../discussion/comments.js';
+import type { DraftService } from '../discussion/drafts.js';
 import { ValidationError } from '../errors.js';
 import type { Store } from '../store/types.js';
 
@@ -8,6 +10,8 @@ import type { Store } from '../store/types.js';
 export interface ApiDeps {
   store: Store;
   auth: AuthService;
+  drafts: DraftService;
+  comments: CommentService;
   /** Browser origins allowed to call the API (exact match). */
   corsOrigins: readonly string[];
   /** Called for unexpected errors; never given request IPs. */
@@ -47,4 +51,16 @@ export function bearerToken(req: FastifyRequest): string | undefined {
  */
 export async function requireSession(deps: ApiDeps, req: FastifyRequest): Promise<Principal> {
   return deps.auth.authenticate(bearerToken(req));
+}
+
+/**
+ * The signed-in account if the request carries a session, `undefined` if it carries none.
+ * @throws {UnauthorizedError} when a token is sent but is not a valid session
+ */
+export async function optionalSession(
+  deps: ApiDeps,
+  req: FastifyRequest,
+): Promise<Principal | undefined> {
+  const token = bearerToken(req);
+  return token === undefined ? undefined : deps.auth.authenticate(token);
 }

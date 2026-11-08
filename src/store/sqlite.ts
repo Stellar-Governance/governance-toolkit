@@ -2,6 +2,8 @@ import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { PROPOSAL_STATES, VOTE_CHOICES, type ProposalStateName } from '../chain/types.js';
 import type {
   AuthChallenge,
+  CommentTarget,
+  DraftQuery,
   EventBatch,
   IndexCursor,
   IndexGap,
@@ -10,6 +12,8 @@ import type {
   Store,
   StoredAccount,
   StoredAction,
+  StoredComment,
+  StoredDraft,
   StoredProposal,
   StoredVote,
 } from './types.js';
@@ -88,6 +92,32 @@ export const MIGRATIONS: readonly string[] = [
      expires_at INTEGER NOT NULL
    );
    CREATE INDEX sessions_expiry ON sessions(expires_at);`,
+  // 3: drafts and comments
+  `CREATE TABLE drafts (
+     seq INTEGER PRIMARY KEY AUTOINCREMENT,
+     id TEXT NOT NULL UNIQUE,
+     author TEXT NOT NULL,
+     title TEXT NOT NULL,
+     body TEXT NOT NULL,
+     content_hash TEXT NOT NULL,
+     status TEXT NOT NULL CHECK (status IN ('draft', 'published')),
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     proposal_id INTEGER
+   );
+   CREATE INDEX drafts_author ON drafts(author);
+   CREATE INDEX drafts_hash ON drafts(content_hash);
+   CREATE INDEX drafts_proposal ON drafts(proposal_id);
+   CREATE TABLE comments (
+     id INTEGER PRIMARY KEY AUTOINCREMENT,
+     target_type TEXT NOT NULL CHECK (target_type IN ('draft', 'proposal')),
+     target_id TEXT NOT NULL,
+     author TEXT NOT NULL,
+     body TEXT NOT NULL,
+     created_at INTEGER NOT NULL,
+     edited_at INTEGER
+   );
+   CREATE INDEX comments_target ON comments(target_type, target_id, id);`,
 ];
 
 function str(row: Row, col: string): string {
@@ -156,6 +186,53 @@ function toVote(row: Row): StoredVote {
     closedAt: str(row, 'closed_at'),
     txHash: str(row, 'tx_hash'),
     eventId: str(row, 'event_id'),
+  };
+}
+
+function draftParams(d: StoredDraft): Record<string, string | number | null> {
+  return {
+    id: d.id,
+    author: d.author,
+    title: d.title,
+    body: d.body,
+    hash: d.contentHash,
+    status: d.status,
+    created: d.createdAt,
+    updated: d.updatedAt,
+    proposal: d.proposalId,
+  };
+}
+
+function toDraft(row: Row): StoredDraft {
+  const status = str(row, 'status');
+  if (status !== 'draft' && status !== 'published') throw new TypeError(`bad status ${status}`);
+  return {
+    id: str(row, 'id'),
+    author: str(row, 'author'),
+    title: str(row, 'title'),
+    body: str(row, 'body'),
+    contentHash: str(row, 'content_hash'),
+    status,
+    createdAt: int(row, 'created_at'),
+    updatedAt: int(row, 'updated_at'),
+    proposalId: row.proposal_id === null ? null : int(row, 'proposal_id'),
+  };
+}
+
+function toComment(row: Row): StoredComment {
+  const type = str(row, 'target_type');
+  const targetId = str(row, 'target_id');
+  let target: CommentTarget;
+  if (type === 'draft') target = { type: 'draft', id: targetId };
+  else if (type === 'proposal') target = { type: 'proposal', id: Number(targetId) };
+  else throw new TypeError(`bad comment target ${type}`);
+  return {
+    id: int(row, 'id'),
+    target,
+    author: str(row, 'author'),
+    body: str(row, 'body'),
+    createdAt: int(row, 'created_at'),
+    editedAt: row.edited_at === null ? null : int(row, 'edited_at'),
   };
 }
 
@@ -399,6 +476,141 @@ export class SqliteStore implements Store {
         recordedAt: int(r, 'recorded_at'),
       })),
     );
+  }
+
+  /** @inheritdoc */
+  createDraft(d: StoredDraft): Promise<void> {
+    this.db
+      .prepare(
+        `INSERT INTO drafts (id, author, title, body, content_hash, status, created_at,
+           updated_at, proposal_id)
+         VALUES (:id, :author, :title, :body, :hash, :status, :created, :updated, :proposal)`,
+      )
+      .run(draftParams(d));
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  updateDraft(d: StoredDraft): Promise<void> {
+    this.db
+      .prepare(
+        `UPDATE drafts SET title = :title, body = :body, content_hash = :hash, status = :status,
+           updated_at = :updated, proposal_id = :proposal
+         WHERE id = :id`,
+      )
+      .run({
+        id: d.id,
+        title: d.title,
+        body: d.body,
+        hash: d.contentHash,
+        status: d.status,
+        updated: d.updatedAt,
+        proposal: d.proposalId,
+      });
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  getDraft(id: string): Promise<StoredDraft | undefined> {
+    const row = this.db.prepare('SELECT * FROM drafts WHERE id = ?').get(id);
+    return Promise.resolve(row === undefined ? undefined : toDraft(row));
+  }
+
+  /** @inheritdoc */
+  listDrafts(q: DraftQuery): Promise<{ drafts: StoredDraft[]; next: string | undefined }> {
+    const before = q.before === undefined ? null : Number(q.before);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM drafts
+         WHERE (:author IS NULL OR author = :author)
+           AND (:status IS NULL OR status = :status)
+           AND (:before IS NULL OR seq < :before)
+         ORDER BY seq DESC LIMIT :limit`,
+      )
+      .all({
+        author: q.author ?? null,
+        status: q.status ?? null,
+        before: before !== null && Number.isSafeInteger(before) ? before : null,
+        limit: q.limit,
+      });
+    const last = rows.at(-1);
+    return Promise.resolve({
+      drafts: rows.map(toDraft),
+      next: rows.length === q.limit && last !== undefined ? String(int(last, 'seq')) : undefined,
+    });
+  }
+
+  /** @inheritdoc */
+  linkDrafts(hash: string, proposalId: number): Promise<number> {
+    const r = this.db
+      .prepare(
+        `UPDATE drafts SET proposal_id = ?
+         WHERE content_hash = ? AND status = 'published' AND proposal_id IS NULL`,
+      )
+      .run(proposalId, hash);
+    return Promise.resolve(Number(r.changes));
+  }
+
+  /** @inheritdoc */
+  draftsForProposal(proposalId: number): Promise<StoredDraft[]> {
+    const rows = this.db
+      .prepare(`SELECT * FROM drafts WHERE proposal_id = ? AND status = 'published' ORDER BY seq`)
+      .all(proposalId);
+    return Promise.resolve(rows.map(toDraft));
+  }
+
+  /** @inheritdoc */
+  proposalIdByHash(hash: string): Promise<number | undefined> {
+    const row = this.db
+      .prepare('SELECT MIN(id) AS id FROM proposals WHERE description_hash = ?')
+      .get(hash);
+    return Promise.resolve(row === undefined || row.id === null ? undefined : int(row, 'id'));
+  }
+
+  /** @inheritdoc */
+  addComment(c: Omit<StoredComment, 'id'>): Promise<number> {
+    const r = this.db
+      .prepare(
+        `INSERT INTO comments (target_type, target_id, author, body, created_at, edited_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(c.target.type, String(c.target.id), c.author, c.body, c.createdAt, c.editedAt);
+    return Promise.resolve(Number(r.lastInsertRowid));
+  }
+
+  /** @inheritdoc */
+  getComment(id: number): Promise<StoredComment | undefined> {
+    const row = this.db.prepare('SELECT * FROM comments WHERE id = ?').get(id);
+    return Promise.resolve(row === undefined ? undefined : toComment(row));
+  }
+
+  /** @inheritdoc */
+  editComment(id: number, body: string, editedAt: number): Promise<void> {
+    this.db
+      .prepare('UPDATE comments SET body = ?, edited_at = ? WHERE id = ?')
+      .run(body, editedAt, id);
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  deleteComment(id: number): Promise<void> {
+    this.db.prepare('DELETE FROM comments WHERE id = ?').run(id);
+    return Promise.resolve();
+  }
+
+  /** @inheritdoc */
+  listComments(
+    target: CommentTarget,
+    q: { afterId?: number | undefined; limit: number },
+  ): Promise<StoredComment[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM comments
+         WHERE target_type = :type AND target_id = :id AND (:after IS NULL OR id > :after)
+         ORDER BY id LIMIT :limit`,
+      )
+      .all({ type: target.type, id: String(target.id), after: q.afterId ?? null, limit: q.limit });
+    return Promise.resolve(rows.map(toComment));
   }
 
   /** @inheritdoc */

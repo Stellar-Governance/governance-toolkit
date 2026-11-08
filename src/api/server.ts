@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
-import { NotFoundError, ToolkitError, UnauthorizedError } from '../errors.js';
+import { NotFoundError, RateLimitError, ToolkitError, UnauthorizedError } from '../errors.js';
 import { registerAuthRoutes } from './auth-routes.js';
+import { registerDiscussionRoutes } from './discussion-routes.js';
 import type { ApiDeps, ErrorBody } from './http.js';
 
 export type { ApiDeps, ErrorBody } from './http.js';
@@ -35,6 +36,8 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
   app.setErrorHandler((err: unknown, _req, reply) => {
     if (err instanceof ToolkitError) {
       if (err instanceof UnauthorizedError) void reply.header('www-authenticate', 'Bearer');
+      if (err instanceof RateLimitError)
+        void reply.header('retry-after', String(err.retryAfterSecs));
       sendError(reply, err.status, err.code, err.message);
       return;
     }
@@ -55,5 +58,6 @@ export function buildServer(deps: ApiDeps): FastifyInstance {
   });
 
   registerAuthRoutes(app, deps);
+  registerDiscussionRoutes(app, deps);
   return app;
 }
