@@ -7,10 +7,10 @@ export default defineConfig(
   {
     languageOptions: {
       parserOptions: {
-        projectService: { allowDefaultProject: ['*.config.js'] },
+        projectService: { allowDefaultProject: ['*.config.js', 'scripts/*.mjs'] },
         tsconfigRootDir: import.meta.dirname,
       },
     },
   },
-  { files: ['**/*.js'], extends: [tseslint.configs.disableTypeChecked] },
+  { files: ['**/*.js', '**/*.mjs'], extends: [tseslint.configs.disableTypeChecked] },
 );
