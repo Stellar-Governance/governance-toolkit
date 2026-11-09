@@ -12,7 +12,7 @@ const live = process.env.LIVE_TESTNET === '1';
 const CONTRACT_ID =
   process.env.GOVERNANCE_CONTRACT_ID ?? 'CAOERDLG52UU6X5JENOXNKN4DWWJPVPNK7AD4RYXE3MA4TRBY62O5I5F';
 const RPC_URL = process.env.STELLAR_RPC_URL ?? 'https://soroban-testnet.stellar.org';
-/** Ledger the contract was deployed in (docs/TESTNET.md); events start after it. */
+/** Ledger the contract was deployed in (docs/TESTNET.md in governance-contract); events start after it. */
 const DEPLOY_LEDGER = Number(process.env.TOOLKIT_START_LEDGER ?? '5611001');
 
 function client(): RpcChainClient {

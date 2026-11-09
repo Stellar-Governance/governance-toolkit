@@ -48,7 +48,8 @@ describe('createService', () => {
     await expect(fetch(`${address}/health`)).rejects.toThrow();
     expect(logs.some((l) => l.startsWith('listening on'))).toBe(true);
     expect(logs.at(-1)).toBe('stopped');
-  });
+    // Real sockets: slower than the in-process tests when the whole suite runs in parallel.
+  }, 20_000);
 
   it('reports a failed indexer run in /health and keeps serving', async () => {
     const chain = new FakeChain();
