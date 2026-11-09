@@ -5,11 +5,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/__GITHUB_ORG__/governance-toolkit.git"
+    "url": "git+https://github.com/Stellar-Governance/governance-toolkit.git"
   },
-  "homepage": "https://github.com/__GITHUB_ORG__/governance-toolkit#readme",
+  "homepage": "https://github.com/Stellar-Governance/governance-toolkit#readme",
   "bugs": {
-    "url": "https://github.com/__GITHUB_ORG__/governance-toolkit/issues"
+    "url": "https://github.com/Stellar-Governance/governance-toolkit/issues"
   },
   "private": true,
   "type": "module",

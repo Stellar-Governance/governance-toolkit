@@ -1,6 +1,6 @@
 # governance-toolkit
 
-[![ci](https://github.com/__GITHUB_ORG__/governance-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/__GITHUB_ORG__/governance-toolkit/actions/workflows/ci.yml)
+[![ci](https://github.com/Stellar-Governance/governance-toolkit/actions/workflows/ci.yml/badge.svg)](https://github.com/Stellar-Governance/governance-toolkit/actions/workflows/ci.yml)
 
 Node service for Stellar Governance. It indexes the governance contract's proposals, votes and deposits from Stellar RPC, hosts proposal drafts and flat comments, signs people in with their Stellar wallet (SEP-53 signed message), and serves a JSON API for the voting frontend and the analytics site.
 
@@ -125,10 +125,10 @@ Needs Node 24 and pnpm 11 (`corepack pnpm ...` if `pnpm` is not on PATH). Opt-in
 
 Stellar Governance is split into four repositories. Dependence runs one way: contract, then toolkit, then frontend, then analytics.
 
-- [governance-contract](https://github.com/__GITHUB_ORG__/governance-contract): Soroban contract (Rust); also holds the project documents
+- [governance-contract](https://github.com/Stellar-Governance/governance-contract): Soroban contract (Rust); also holds the project documents
 - **governance-toolkit** (this repository): Node service: indexer, drafts, discussion, sign-in, read API
-- [governance-frontend](https://github.com/__GITHUB_ORG__/governance-frontend): Next.js voting dashboard
-- [voting-analytics](https://github.com/__GITHUB_ORG__/voting-analytics): static analytics site
+- [governance-frontend](https://github.com/Stellar-Governance/governance-frontend): Next.js voting dashboard
+- [voting-analytics](https://github.com/Stellar-Governance/voting-analytics): static analytics site
 
 ## License
 
