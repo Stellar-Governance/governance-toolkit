@@ -98,7 +98,7 @@ Limits: draft title 120 UTF-8 bytes (the contract's title limit), draft body 32 
 2. The wallet signs `message` with SEP-53 (`signMessage` in the Stellar Wallets Kit): ed25519 over `SHA-256("Stellar Signed Message:\n" + message)`.
 3. `POST /auth/verify {"address", "nonce", "signature"}` (signature as base64 or hex) returns `{"token", "address", "expiresAt"}`. Send the token as `Authorization: Bearer <token>`.
 
-The nonce is used up by the first verify attempt, valid or not. The token is 32 random bytes; only its sha256 is stored. No cookies are set. Only `G...` accounts can sign in (contract accounts cannot sign messages). Tested with keys generated in tests; not yet tested with a real browser wallet.
+The nonce is used up by the first verify attempt, valid or not. The token is 32 random bytes; only its sha256 is stored. No cookies are set. Only `G...` accounts can sign in (contract accounts cannot sign messages). Tested with keys generated in tests, and on testnet with SEP-53 signatures made by the Stellar CLI (`stellar message sign`, used by `scripts/rehearse-draft.mjs`). Not yet tested with a browser wallet, so the signature encoding real wallets return is unverified.
 
 ## Data and privacy
 
